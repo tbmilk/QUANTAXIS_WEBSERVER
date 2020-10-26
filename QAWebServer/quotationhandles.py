@@ -134,7 +134,7 @@ class future_realtime(QABaseHandler):
 
         """
 
-        symbol = self.get_argument('symbol', 'RB1910')
+        symbol = self.get_argument('symbol', 'RB2005')
         frequence = self.get_argument('range', '5min')
 
         if frequence == '86400000':
@@ -159,12 +159,22 @@ class future_realtime(QABaseHandler):
             start = '2019-06-01'
         end = QA.QAUtil.QADate.QA_util_stamp2datetime(
             int(self.get_argument('prevTradeTime')))
-        res = QA.QA_quotation(symbol, start, end, frequence, 'future_cn',
-                              source=QA.DATASOURCE.MONGO, output=QA.OUTPUT_FORMAT.DATASTRUCT)
-        x1 = res.data.reset_index()
+        if frequence != 'week':
+            res = QA.QA_quotation(symbol, start, end, frequence, 'future_cn',
+                                source=QA.DATASOURCE.MONGO, output=QA.OUTPUT_FORMAT.DATASTRUCT)
+            x1 = res.data.reset_index()
+        else:
+            res = QA.QA_quotation(symbol, start, end, 'day', 'future_cn',
+                    source=QA.DATASOURCE.MONGO, output=QA.OUTPUT_FORMAT.DATASTRUCT)
 
+            x1 = QA.QA_data_day_resample(res.data.assign(amount= res.position), 'w').reset_index()
+
+            
         quote = QA.QA_fetch_get_future_realtime('tdx', symbol)
-        x1['datetime'] = pd.to_datetime(x1['datetime'])
+        if frequence in ['day', 'week']:
+            x1['datetime'] = pd.to_datetime(x1['date'])
+        else:
+            x1['datetime'] = pd.to_datetime(x1['datetime'])
         x = {
             "success": True,
             "data": {
@@ -237,16 +247,27 @@ class stock_realtime(QABaseHandler):
             int(self.get_argument('prevTradeTime'))))[0:19]
 
         #res = QA.QA_quotation(symbol, start, end, frequence, 'stock_cn','mongo', output=QA.OUTPUT_FORMAT.DATASTRUCT)
-        res = QA.QA_fetch_get_stock_min('tdx', symbol, start, end, frequence)
+        if frequence in ['day', 'week']:
+            res = QA.QA_fetch_stock_day_adv(symbol, start, end, frequence)
+            print(res.week)
+            if frequence == 'week':
+                x1 = res.week.reset_index()
+            else:
+                x1 = res.data.reset_index()
+            
+            x1['datetime'] = pd.to_datetime(x1['date'])
+        else:
+            res = QA.QA_fetch_stock_min_adv(symbol, start, end, frequence)
+            x1 = res.data.reset_index()
+            x1['datetime'] = pd.to_datetime(x1['datetime'])
 
-        x1 = res
 
         quote = QA.QA_fetch_get_stock_realtime('tdx', symbol)
-        x1['datetime'] = pd.to_datetime(x1['datetime'])
+
         x = {
             "success": True,
             "data": {
-                "lines": pd.concat([x1.datetime.apply(lambda x: float(x.tz_localize('Asia/Shanghai').value/1000000)), x1.open, x1.high, x1.low, x1.close, x1.vol], axis=1).to_numpy().tolist(),
+                "lines": pd.concat([x1.datetime.apply(lambda x: float(x.tz_localize('Asia/Shanghai').value/1000000)), x1.open, x1.high, x1.low, x1.close, x1.volume], axis=1).to_numpy().tolist(),
                 "trades": [
                     {
                         "amount": float(quote['cur_vol'].values[0]),
@@ -380,6 +401,39 @@ class index_realtime(QABaseHandler):
         }
 
         self.write(x)
+
+
+
+class price_realtime(QABaseHandler):
+    """此函数专门为macbookpro 带Bar用户准备
+
+    传入code/market  即可获得实时报价
+
+    如果啥也不传入, 则给一些常见的code/market组合
+    
+    Arguments:
+        QABaseHandler {[type]} -- [description]
+
+    Return:
+        {'code': '000001, 'price': '20.1', 'market': 'stock_cn'}
+    """
+
+    def get(self):
+        code = self.get_argument('code', '000001')
+        market = self.get_argument('market', 'None')
+        
+        if market == 'stock_cn':
+            data = QA.QA_fetch_get_stock_realtime('tdx', code)
+            self.write({'code': code, 'market': market, 'price': data.price.values[0]})
+        elif market == 'future_cn':
+            data = QA.QA_fetch_get_future_realtime('tdx', code.upper())
+            self.write({'code': code, 'market': market, 'price': data.price.values[0]})
+        elif market == 'index_cn':
+            data = QA.QA_fetch_get_index_realtime('tdx', code)
+            self.write({'code': code, 'market': market, 'price': data.price.values[0]})
+        elif market == 'bond_cn':
+            data = QA.QA_fetch_get_index_realtime('tdx', code)
+            self.write({'code': code, 'market': market, 'price': data.price.values[0]})
 
 
 if __name__ == '__main__':
